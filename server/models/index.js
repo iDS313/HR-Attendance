@@ -827,4 +827,23 @@ db.HrSupportRequest.belongsTo(db.Organizations, {
   as: "Organization",
 });
 
+/* ============================================================
+   Mobile Activity logs adding the branch id 
+   ============================================================ */
+
+// ActivityLogMobile.branch_id -> BranchMaster.branch_id
+db.ActivityLogMobile.belongsTo(db.BranchMaster, {
+  foreignKey: "branch_id",
+  targetKey: "branch_id",
+  as: "branch",
+  constraints: false,
+});
+
+db.BranchMaster.hasMany(db.ActivityLogMobile, {
+  foreignKey: "branch_id",
+  sourceKey: "branch_id",
+  as: "activityLogs",
+  constraints: false,
+});
+
 module.exports = db;
