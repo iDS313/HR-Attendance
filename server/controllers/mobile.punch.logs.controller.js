@@ -8,6 +8,7 @@ const db = require("../models");
 const {
   ActivityLogMobile,
   Organizations,
+  BranchMaster,
 } = db;
 
 const baseUploadDir = path.join(__dirname, "../IHRDocument");
@@ -15,6 +16,14 @@ const baseUploadDir = path.join(__dirname, "../IHRDocument");
 if (!fs.existsSync(baseUploadDir)) {
   fs.mkdirSync(baseUploadDir, { recursive: true });
 }
+
+/* ---------- Reusable include for branch ---------- */
+const branchInclude = {
+  model: BranchMaster,
+  as: "branch",
+  attributes: ["branch_id", "branch_name", "branch_code"],
+  required: false,
+};
 
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
@@ -29,18 +38,12 @@ const storage = multer.diskStorage({
       if (!employeeId) {
         return cb(new Error("Employee ID not found"));
       }
-      
 
       const orgRow = await Organizations.findOne({
         where: { or_emp_id: employeeId },
         attributes: ["or_emp_id"],
         order: [["or_id", "DESC"]],
       });
-
-      console.log("-------------------");
-      console.log(orgRow);
-      console.log(employeeId);
-      console.log("-------------------");
 
       const employeeCode = orgRow?.or_emp_id;
 
@@ -65,11 +68,7 @@ const storage = multer.diskStorage({
 
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-
-    cb(
-      null,
-      `profile_${Date.now()}${ext}`
-    );
+    cb(null, `profile_${Date.now()}${ext}`);
   },
 });
 
@@ -91,6 +90,7 @@ const upload = multer({
 
 exports.uploadActivityImage = upload.single("image_file");
 
+/* ---------------- CREATE ---------------- */
 exports.createActivityLog = async (req, res) => {
   try {
     const {
@@ -115,12 +115,15 @@ exports.createActivityLog = async (req, res) => {
 
     if (req.file) {
       imageFilePath = path
-        .relative(
-          path.join(__dirname, ".."),
-          req.file.path
-        )
+        .relative(path.join(__dirname, ".."), req.file.path)
         .replace(/\\/g, "/");
     }
+
+    const orgRow = await Organizations.findOne({
+      where: { or_emp_id: from_user_emp_id },
+      attributes: ["or_emp_id", "or_reporting_location_id"],
+      order: [["or_id", "DESC"]],
+    });
 
     const activityLog = await ActivityLogMobile.create({
       emp_id,
@@ -132,16 +135,21 @@ exports.createActivityLog = async (req, res) => {
       image_file_path: imageFilePath,
       latitude: latitude ?? null,
       longitude: longitude ?? null,
+      branch_id: orgRow?.or_reporting_location_id ?? null,
+    });
+
+    // re-fetch with branch for a nice response
+    const created = await ActivityLogMobile.findByPk(activityLog.id, {
+      include: [branchInclude],
     });
 
     return res.status(201).json({
       success: true,
       message: "Activity log created successfully",
-      data: activityLog,
+      data: created,
     });
   } catch (error) {
     console.error("createActivityLog error:", error);
-
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -150,11 +158,14 @@ exports.createActivityLog = async (req, res) => {
   }
 };
 
+/* ---------------- GET BY ID ---------------- */
 exports.getActivityLogById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const activityLog = await ActivityLogMobile.findByPk(id);
+    const activityLog = await ActivityLogMobile.findByPk(id, {
+      include: [branchInclude],
+    });
 
     if (!activityLog) {
       return res.status(404).json({
@@ -169,7 +180,6 @@ exports.getActivityLogById = async (req, res) => {
     });
   } catch (error) {
     console.error("getActivityLogById error:", error);
-
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -177,9 +187,11 @@ exports.getActivityLogById = async (req, res) => {
   }
 };
 
+/* ---------------- GET ALL ---------------- */
 exports.getAllActivityLogs = async (req, res) => {
   try {
     const activityLogs = await ActivityLogMobile.findAll({
+      include: [branchInclude],
       order: [["id", "DESC"]],
     });
 
@@ -190,7 +202,6 @@ exports.getAllActivityLogs = async (req, res) => {
     });
   } catch (error) {
     console.error("getAllActivityLogs error:", error);
-
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -198,6 +209,7 @@ exports.getAllActivityLogs = async (req, res) => {
   }
 };
 
+/* ---------------- PAGINATED (Mobile Log List) ---------------- */
 exports.getPaginatedActivityLogs = async (req, res) => {
   try {
     let {
@@ -215,17 +227,9 @@ exports.getPaginatedActivityLogs = async (req, res) => {
     page = parseInt(page, 10);
     limit = parseInt(limit, 10);
 
-    if (isNaN(page) || page < 1) {
-      page = 1;
-    }
-
-    if (isNaN(limit) || limit < 1) {
-      limit = 10;
-    }
-
-    if (limit > 100) {
-      limit = 100;
-    }
+    if (isNaN(page) || page < 1) page = 1;
+    if (isNaN(limit) || limit < 1) limit = 10;
+    if (limit > 100) limit = 100;
 
     const offset = (page - 1) * limit;
 
@@ -243,51 +247,33 @@ exports.getPaginatedActivityLogs = async (req, res) => {
       : "id";
 
     const sortDirection =
-      sort_order?.toLowerCase() === "asc"
-        ? "ASC"
-        : "DESC";
+      sort_order?.toLowerCase() === "asc" ? "ASC" : "DESC";
 
     const where = {};
 
-    if (emp_id) {
-      where.emp_id = emp_id;
-    }
+    if (emp_id) where.emp_id = emp_id;
+    if (from_user_emp_id) where.from_user_emp_id = from_user_emp_id;
 
-    if (from_user_emp_id) {
-      where.from_user_emp_id = from_user_emp_id;
-    }
-
-    if (
-      punch_type !== undefined &&
-      punch_type !== ""
-    ) {
+    if (punch_type !== undefined && punch_type !== "") {
       where.punch_type = punch_type;
     }
 
     if (from_date || to_date) {
       where.punch_time = {};
-
-      if (from_date) {
-        where.punch_time[Op.gte] = from_date;
-      }
-
-      if (to_date) {
-        where.punch_time[Op.lte] = to_date;
-      }
+      if (from_date) where.punch_time[Op.gte] = from_date;
+      if (to_date) where.punch_time[Op.lte] = to_date;
     }
 
-    const {
-      count,
-      rows,
-    } = await ActivityLogMobile.findAndCountAll({
+    const { count, rows } = await ActivityLogMobile.findAndCountAll({
       where,
+      include: [branchInclude],
       order: [[sortColumn, sortDirection]],
       limit,
       offset,
+      distinct: true,
     });
 
-    const totalPages =
-      Math.ceil(count / limit) || 1;
+    const totalPages = Math.ceil(count / limit) || 1;
 
     return res.status(200).json({
       success: true,
@@ -302,11 +288,7 @@ exports.getPaginatedActivityLogs = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(
-      "getPaginatedActivityLogs error:",
-      error
-    );
-
+    console.error("getPaginatedActivityLogs error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -314,6 +296,113 @@ exports.getPaginatedActivityLogs = async (req, res) => {
   }
 };
 
+/* ---------------- BY EMPLOYEE - PAGINATED ---------------- */
+exports.getActivityLogsByEmployee = async (req, res) => {
+  try {
+    const { emp_id } = req.params;
+    let { page = 1, limit = 10, from_date, to_date } = req.query;
+
+    page = parseInt(page, 10);
+    limit = parseInt(limit, 10);
+    if (isNaN(page) || page < 1) page = 1;
+    if (isNaN(limit) || limit < 1) limit = 10;
+    if (limit > 100) limit = 100;
+
+    const offset = (page - 1) * limit;
+    const where = { emp_id };
+
+    if (from_date || to_date) {
+      where.punch_time = {};
+      if (from_date) where.punch_time[Op.gte] = from_date;
+      if (to_date) where.punch_time[Op.lte] = to_date;
+    }
+
+    const { count, rows } = await ActivityLogMobile.findAndCountAll({
+      where,
+      include: [branchInclude],
+      order: [["id", "DESC"]],
+      limit,
+      offset,
+      distinct: true,
+    });
+
+    const totalPages = Math.ceil(count / limit) || 1;
+
+    return res.status(200).json({
+      success: true,
+      data: rows,
+      pagination: {
+        page,
+        limit,
+        totalRecords: count,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error("getActivityLogsByEmployee error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+/* ---------------- BY FROM USER - PAGINATED ---------------- */
+exports.getActivityLogsByFromUser = async (req, res) => {
+  try {
+    const { from_user_emp_id } = req.params;
+    let { page = 1, limit = 10, from_date, to_date } = req.query;
+
+    page = parseInt(page, 10);
+    limit = parseInt(limit, 10);
+    if (isNaN(page) || page < 1) page = 1;
+    if (isNaN(limit) || limit < 1) limit = 10;
+    if (limit > 100) limit = 100;
+
+    const offset = (page - 1) * limit;
+    const where = { from_user_emp_id };
+
+    if (from_date || to_date) {
+      where.punch_time = {};
+      if (from_date) where.punch_time[Op.gte] = from_date;
+      if (to_date) where.punch_time[Op.lte] = to_date;
+    }
+
+    const { count, rows } = await ActivityLogMobile.findAndCountAll({
+      where,
+      include: [branchInclude],
+      order: [["id", "DESC"]],
+      limit,
+      offset,
+      distinct: true,
+    });
+
+    const totalPages = Math.ceil(count / limit) || 1;
+
+    return res.status(200).json({
+      success: true,
+      data: rows,
+      pagination: {
+        page,
+        limit,
+        totalRecords: count,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error("getActivityLogsByFromUser error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
+/* ---------------- UPDATE ---------------- */
 exports.updateActivityLog = async (req, res) => {
   try {
     const { id } = req.params;
@@ -329,8 +418,7 @@ exports.updateActivityLog = async (req, res) => {
       longitude,
     } = req.body;
 
-    const activityLog =
-      await ActivityLogMobile.findByPk(id);
+    const activityLog = await ActivityLogMobile.findByPk(id);
 
     if (!activityLog) {
       return res.status(404).json({
@@ -352,26 +440,17 @@ exports.updateActivityLog = async (req, res) => {
       longitude,
     };
 
-    Object.entries(fieldMap).forEach(
-      ([key, value]) => {
-        if (value !== undefined) {
-          updateData[key] = value;
-        }
-      }
-    );
+    Object.entries(fieldMap).forEach(([key, value]) => {
+      if (value !== undefined) updateData[key] = value;
+    });
 
     if (req.file) {
       updateData.image_file_path = path
-        .relative(
-          path.join(__dirname, ".."),
-          req.file.path
-        )
+        .relative(path.join(__dirname, ".."), req.file.path)
         .replace(/\\/g, "/");
     }
 
-    if (
-      Object.keys(updateData).length === 0
-    ) {
+    if (Object.keys(updateData).length === 0) {
       return res.status(400).json({
         success: false,
         message: "No fields provided to update",
@@ -380,17 +459,17 @@ exports.updateActivityLog = async (req, res) => {
 
     await activityLog.update(updateData);
 
+    const updated = await ActivityLogMobile.findByPk(id, {
+      include: [branchInclude],
+    });
+
     return res.status(200).json({
       success: true,
       message: "Activity log updated successfully",
-      data: activityLog,
+      data: updated,
     });
   } catch (error) {
-    console.error(
-      "updateActivityLog error:",
-      error
-    );
-
+    console.error("updateActivityLog error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -399,12 +478,12 @@ exports.updateActivityLog = async (req, res) => {
   }
 };
 
+/* ---------------- DELETE ---------------- */
 exports.deleteActivityLog = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const activityLog =
-      await ActivityLogMobile.findByPk(id);
+    const activityLog = await ActivityLogMobile.findByPk(id);
 
     if (!activityLog) {
       return res.status(404).json({
@@ -433,11 +512,7 @@ exports.deleteActivityLog = async (req, res) => {
       data: activityLog,
     });
   } catch (error) {
-    console.error(
-      "deleteActivityLog error:",
-      error
-    );
-
+    console.error("deleteActivityLog error:", error);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
