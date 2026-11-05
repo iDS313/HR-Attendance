@@ -14,18 +14,16 @@ const getUserId = (req) => {
 
 const getPagination = (req) => {
   const pageValue =
-    req.query.page !== undefined
-      ? req.query.page
-      : req.query.Page;
+    req.query.page !== undefined ? req.query.page : req.query.Page;
 
   const perPageValue =
     req.query.perPage !== undefined
       ? req.query.perPage
       : req.query.per_page !== undefined
-      ? req.query.per_page
-      : req.query.pagePerRecords !== undefined
-      ? req.query.pagePerRecords
-      : req.query.page_per_records;
+        ? req.query.per_page
+        : req.query.pagePerRecords !== undefined
+          ? req.query.pagePerRecords
+          : req.query.page_per_records;
 
   if (
     pageValue === undefined ||
@@ -74,7 +72,7 @@ const attachAuditDetails = async (records) => {
           item.Smb_CreatedBy,
           item.Smb_UpdatedBy,
         ])
-        .filter((id) => id !== null && id !== undefined)
+        .filter((id) => id !== null && id !== undefined),
     ),
   ];
 
@@ -96,33 +94,20 @@ const attachAuditDetails = async (records) => {
     where: {
       pr_id: userIds,
     },
-    attributes: [
-      "pr_id",
-      "pr_first_name",
-      "pr_last_name",
-      "pr_email",
-    ],
+    attributes: ["pr_id", "pr_first_name", "pr_last_name", "pr_email"],
     raw: true,
   });
 
-  const userMap = new Map(
-    users.map((user) => [Number(user.pr_id), user])
-  );
+  const userMap = new Map(users.map((user) => [Number(user.pr_id), user]));
 
   const result = rows.map((item) => {
     const plain = item.toJSON ? item.toJSON() : item;
 
     const createdBy =
-      plain.Sm_CreatedBy ??
-      plain.Smd_CreatedBy ??
-      plain.Smb_CreatedBy ??
-      null;
+      plain.Sm_CreatedBy ?? plain.Smd_CreatedBy ?? plain.Smb_CreatedBy ?? null;
 
     const updatedBy =
-      plain.Sm_UpdatedBy ??
-      plain.Smd_UpdatedBy ??
-      plain.Smb_UpdatedBy ??
-      null;
+      plain.Sm_UpdatedBy ?? plain.Smd_UpdatedBy ?? plain.Smb_UpdatedBy ?? null;
 
     return {
       ...plain,
@@ -138,11 +123,7 @@ const attachAuditDetails = async (records) => {
   return Array.isArray(records) ? result : result[0];
 };
 
-const buildPaginationResponse = (
-  rows,
-  count,
-  pagination
-) => {
+const buildPaginationResponse = (rows, count, pagination) => {
   if (!pagination.isPaginated) {
     return {
       records: rows,
@@ -162,10 +143,7 @@ const buildPaginationResponse = (
   };
 };
 
-const validateShiftHours = (
-  expectedHours,
-  halfDayHours
-) => {
+const validateShiftHours = (expectedHours, halfDayHours) => {
   const expected = Number(expectedHours);
   const halfDay = Number(halfDayHours);
 
@@ -186,8 +164,7 @@ const validateShiftHours = (
   if (halfDay > expected) {
     return {
       valid: false,
-      message:
-        "Sm_half_day_hours cannot be greater than Sm_expected_hours.",
+      message: "Sm_half_day_hours cannot be greater than Sm_expected_hours.",
     };
   }
 
@@ -207,8 +184,8 @@ exports.createShift = async (req, res) => {
       Sm_shift_name,
       Sm_start_time,
       Sm_end_time,
-      Sm_expected_hours = 9.00,
-      Sm_half_day_hours = 5.00,
+      Sm_expected_hours = 9.0,
+      Sm_half_day_hours = 5.0,
       Sm_grace_in_minutes = 0,
       Sm_grace_out_minutes = 0,
       Sm_half_day_after_minutes = null,
@@ -218,12 +195,7 @@ exports.createShift = async (req, res) => {
       breaks = [],
     } = req.body;
 
-    if (
-      !Sm_shift_code ||
-      !Sm_shift_name ||
-      !Sm_start_time ||
-      !Sm_end_time
-    ) {
+    if (!Sm_shift_code || !Sm_shift_name || !Sm_start_time || !Sm_end_time) {
       return res.status(400).json({
         success: false,
         message:
@@ -233,7 +205,7 @@ exports.createShift = async (req, res) => {
 
     const hourValidation = validateShiftHours(
       Sm_expected_hours,
-      Sm_half_day_hours
+      Sm_half_day_hours,
     );
 
     if (!hourValidation.valid) {
@@ -277,8 +249,7 @@ exports.createShift = async (req, res) => {
         Smd_shift_id: shift.Sm_shift_id,
         Smd_day_of_week: day.Smd_day_of_week,
         Smd_day_name: day.Smd_day_name,
-        Smd_attendance_status_id:
-          day.Smd_attendance_status_id,
+        Smd_attendance_status_id: day.Smd_attendance_status_id,
         Smd_CreatedBy: userId,
         Smd_IsActive: true,
       }));
@@ -292,10 +263,7 @@ exports.createShift = async (req, res) => {
         Smb_break_name: item.Smb_break_name,
         Smb_start_time: item.Smb_start_time,
         Smb_end_time: item.Smb_end_time,
-        Smb_is_paid:
-          item.Smb_is_paid === undefined
-            ? true
-            : item.Smb_is_paid,
+        Smb_is_paid: item.Smb_is_paid === undefined ? true : item.Smb_is_paid,
         Smb_CreatedBy: userId,
         Smb_IsActive: true,
       }));
@@ -303,9 +271,7 @@ exports.createShift = async (req, res) => {
       await ShiftMasterBreaks.bulkCreate(breakRecords);
     }
 
-    const createdShift = await ShiftMaster.findByPk(
-      shift.Sm_shift_id
-    );
+    const createdShift = await ShiftMaster.findByPk(shift.Sm_shift_id);
 
     const result = await attachAuditDetails(createdShift);
 
@@ -346,11 +312,7 @@ exports.getShifts = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      ...buildPaginationResponse(
-        records,
-        result.count,
-        pagination
-      ),
+      ...buildPaginationResponse(records, result.count, pagination),
     });
   } catch (error) {
     console.error(error);
@@ -364,16 +326,18 @@ exports.getShifts = async (req, res) => {
 };
 
 exports.getShiftById = async (req, res) => {
+  const { id } = req.params;
+
+  console.log("--------------------by id---------", id);
+
+  if (!id) {
+    return res.status(400).json({
+      success: false,
+      message: "Shift ID is required.",
+    });
+  }
+
   try {
-    const { id } = req.params;
-
-    if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: "Shift ID is required.",
-      });
-    }
-
     const shift = await ShiftMaster.findByPk(id);
 
     if (!shift) {
@@ -404,9 +368,14 @@ exports.getShiftById = async (req, res) => {
       order: [["Smb_shift_break_id", "DESC"]],
     });
 
-    const shiftDetails = await attachAuditDetails(shift);
-    const dayDetails = await attachAuditDetails(days);
-    const breakDetails = await attachAuditDetails(breaks);
+    // Convert Sequelize instances to plain objects
+    const shiftData = shift.toJSON();
+    const daysData = days.map((day) => day.toJSON());
+    const breaksData = breaks.map((item) => item.toJSON());
+
+    const shiftDetails = await attachAuditDetails(shiftData);
+    const dayDetails = await attachAuditDetails(daysData);
+    const breakDetails = await attachAuditDetails(breaksData);
 
     return res.status(200).json({
       success: true,
@@ -417,7 +386,7 @@ exports.getShiftById = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error(error);
+    console.error("getShiftById error:", error);
 
     return res.status(500).json({
       success: false,
@@ -468,14 +437,22 @@ exports.updateShift = async (req, res) => {
       Sm_half_day_after_minutes,
       Sm_early_go_minutes,
       Sm_is_overnight,
+      Sm_IsActive,
       days,
       breaks,
     } = req.body;
 
-    if (
-      Sm_shift_code !== undefined &&
-      Sm_shift_code !== shift.Sm_shift_code
-    ) {
+    // Reject strings like "false", since they are truthy in JavaScript and SQL
+    if (Sm_IsActive !== undefined && typeof Sm_IsActive !== "boolean") {
+      await transaction.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message: "Sm_IsActive must be true or false.",
+      });
+    }
+
+    if (Sm_shift_code !== undefined && Sm_shift_code !== shift.Sm_shift_code) {
       const existingShift = await ShiftMaster.findOne({
         where: {
           Sm_shift_code,
@@ -508,7 +485,7 @@ exports.updateShift = async (req, res) => {
 
     const hourValidation = validateShiftHours(
       finalExpectedHours,
-      finalHalfDayHours
+      finalHalfDayHours,
     );
 
     if (!hourValidation.valid) {
@@ -539,13 +516,11 @@ exports.updateShift = async (req, res) => {
     }
 
     if (Sm_expected_hours !== undefined) {
-      updateData.Sm_expected_hours =
-        hourValidation.expected;
+      updateData.Sm_expected_hours = hourValidation.expected;
     }
 
     if (Sm_half_day_hours !== undefined) {
-      updateData.Sm_half_day_hours =
-        hourValidation.halfDay;
+      updateData.Sm_half_day_hours = hourValidation.halfDay;
     }
 
     if (Sm_grace_in_minutes !== undefined) {
@@ -557,8 +532,7 @@ exports.updateShift = async (req, res) => {
     }
 
     if (Sm_half_day_after_minutes !== undefined) {
-      updateData.Sm_half_day_after_minutes =
-        Sm_half_day_after_minutes;
+      updateData.Sm_half_day_after_minutes = Sm_half_day_after_minutes;
     }
 
     if (Sm_early_go_minutes !== undefined) {
@@ -567,6 +541,10 @@ exports.updateShift = async (req, res) => {
 
     if (Sm_is_overnight !== undefined) {
       updateData.Sm_is_overnight = Sm_is_overnight;
+    }
+
+    if (Sm_IsActive !== undefined) {
+      updateData.Sm_IsActive = Sm_IsActive;
     }
 
     updateData.Sm_UpdatedBy = userId;
@@ -588,13 +566,10 @@ exports.updateShift = async (req, res) => {
           Smd_shift_id: shift_id,
           Smd_day_of_week: day.Smd_day_of_week,
           Smd_day_name: day.Smd_day_name,
-          Smd_attendance_status_id:
-            day.Smd_attendance_status_id,
+          Smd_attendance_status_id: day.Smd_attendance_status_id,
           Smd_CreatedBy: userId,
           Smd_IsActive:
-            day.Smd_IsActive === undefined
-              ? true
-              : day.Smd_IsActive,
+            day.Smd_IsActive === undefined ? true : day.Smd_IsActive,
         }));
 
         await ShiftMasterDays.bulkCreate(dayRecords, {
@@ -617,15 +592,10 @@ exports.updateShift = async (req, res) => {
           Smb_break_name: item.Smb_break_name,
           Smb_start_time: item.Smb_start_time,
           Smb_end_time: item.Smb_end_time,
-          Smb_is_paid:
-            item.Smb_is_paid === undefined
-              ? true
-              : item.Smb_is_paid,
+          Smb_is_paid: item.Smb_is_paid === undefined ? true : item.Smb_is_paid,
           Smb_CreatedBy: userId,
           Smb_IsActive:
-            item.Smb_IsActive === undefined
-              ? true
-              : item.Smb_IsActive,
+            item.Smb_IsActive === undefined ? true : item.Smb_IsActive,
         }));
 
         await ShiftMasterBreaks.bulkCreate(breakRecords, {
@@ -659,17 +629,9 @@ exports.updateShift = async (req, res) => {
       order: [["Smb_shift_break_id", "DESC"]],
     });
 
-    const shiftPlain = updatedShift
-      ? updatedShift.get({ plain: true })
-      : null;
-
-    const daysPlain = updatedDays.map((item) =>
-      item.get({ plain: true })
-    );
-
-    const breaksPlain = updatedBreaks.map((item) =>
-      item.get({ plain: true })
-    );
+    const shiftPlain = updatedShift ? updatedShift.get({ plain: true }) : null;
+    const daysPlain = updatedDays.map((item) => item.get({ plain: true }));
+    const breaksPlain = updatedBreaks.map((item) => item.get({ plain: true }));
 
     const shiftDetails = await attachAuditDetails(shiftPlain);
     const dayDetails = await attachAuditDetails(daysPlain);
@@ -781,11 +743,7 @@ exports.getShiftDays = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      ...buildPaginationResponse(
-        records,
-        result.count,
-        pagination
-      ),
+      ...buildPaginationResponse(records, result.count, pagination),
     });
   } catch (error) {
     console.error("getShiftDays error:", error);
@@ -844,26 +802,20 @@ exports.updateShiftDays = async (req, res) => {
       if (existing) {
         await existing.update({
           Smd_day_name: day.Smd_day_name,
-          Smd_attendance_status_id:
-            day.Smd_attendance_status_id,
+          Smd_attendance_status_id: day.Smd_attendance_status_id,
           Smd_UpdatedBy: userId,
           Smd_IsActive:
-            day.Smd_IsActive === undefined
-              ? true
-              : day.Smd_IsActive,
+            day.Smd_IsActive === undefined ? true : day.Smd_IsActive,
         });
       } else {
         await ShiftMasterDays.create({
           Smd_shift_id: shiftId,
           Smd_day_of_week: day.Smd_day_of_week,
           Smd_day_name: day.Smd_day_name,
-          Smd_attendance_status_id:
-            day.Smd_attendance_status_id,
+          Smd_attendance_status_id: day.Smd_attendance_status_id,
           Smd_CreatedBy: userId,
           Smd_IsActive:
-            day.Smd_IsActive === undefined
-              ? true
-              : day.Smd_IsActive,
+            day.Smd_IsActive === undefined ? true : day.Smd_IsActive,
         });
       }
     }
@@ -914,11 +866,7 @@ exports.createBreak = async (req, res) => {
       });
     }
 
-    if (
-      !Smb_break_name ||
-      !Smb_start_time ||
-      !Smb_end_time
-    ) {
+    if (!Smb_break_name || !Smb_start_time || !Smb_end_time) {
       return res.status(400).json({
         success: false,
         message:
@@ -971,19 +919,13 @@ exports.getBreaks = async (req, res) => {
       options.offset = pagination.offset;
     }
 
-    const result = await ShiftMasterBreaks.findAndCountAll(
-      options
-    );
+    const result = await ShiftMasterBreaks.findAndCountAll(options);
 
     const records = await attachAuditDetails(result.rows);
 
     return res.status(200).json({
       success: true,
-      ...buildPaginationResponse(
-        records,
-        result.count,
-        pagination
-      ),
+      ...buildPaginationResponse(records, result.count, pagination),
     });
   } catch (error) {
     console.error(error);
@@ -1001,8 +943,7 @@ exports.updateBreak = async (req, res) => {
     const userId = getUserId(req);
     const { id } = req.params;
 
-    const breakRecord =
-      await ShiftMasterBreaks.findByPk(id);
+    const breakRecord = await ShiftMasterBreaks.findByPk(id);
 
     if (!breakRecord) {
       return res.status(404).json({
@@ -1011,12 +952,8 @@ exports.updateBreak = async (req, res) => {
       });
     }
 
-    const {
-      Smb_break_name,
-      Smb_start_time,
-      Smb_end_time,
-      Smb_is_paid,
-    } = req.body;
+    const { Smb_break_name, Smb_start_time, Smb_end_time, Smb_is_paid } =
+      req.body;
 
     const updateData = {};
 
@@ -1026,18 +963,15 @@ exports.updateBreak = async (req, res) => {
     if (Smb_start_time !== undefined)
       updateData.Smb_start_time = Smb_start_time;
 
-    if (Smb_end_time !== undefined)
-      updateData.Smb_end_time = Smb_end_time;
+    if (Smb_end_time !== undefined) updateData.Smb_end_time = Smb_end_time;
 
-    if (Smb_is_paid !== undefined)
-      updateData.Smb_is_paid = Smb_is_paid;
+    if (Smb_is_paid !== undefined) updateData.Smb_is_paid = Smb_is_paid;
 
     updateData.Smb_UpdatedBy = userId;
 
     await breakRecord.update(updateData);
 
-    const updatedBreak =
-      await ShiftMasterBreaks.findByPk(id);
+    const updatedBreak = await ShiftMasterBreaks.findByPk(id);
 
     const result = await attachAuditDetails(updatedBreak);
 
@@ -1062,8 +996,7 @@ exports.deleteBreak = async (req, res) => {
     const userId = getUserId(req);
     const { id } = req.params;
 
-    const breakRecord =
-      await ShiftMasterBreaks.findByPk(id);
+    const breakRecord = await ShiftMasterBreaks.findByPk(id);
 
     if (!breakRecord) {
       return res.status(404).json({

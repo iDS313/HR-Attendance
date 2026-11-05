@@ -17,7 +17,7 @@ router.get(
 );
 
 router.get(
-  "/:shift_id",
+  "/:id",
   shiftController.getShiftById
 );
 
