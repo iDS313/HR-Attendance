@@ -314,12 +314,8 @@ const getShiftBreaks = async (
   );
 };
 
-exports.assignShift = async (
-  req,
-  res
-) => {
-  const transaction =
-    await db.sequelize.transaction();
+exports.assignShift = async (req, res) => {
+  const transaction = await db.sequelize.transaction();
 
   try {
     const userId = getUserId(req);
@@ -332,13 +328,8 @@ exports.assignShift = async (
       Esr_assignment_type = "MASTER",
     } = req.body;
 
-    if (
-      !Esr_pr_id ||
-      !Esr_shift_id ||
-      !Esr_from_date
-    ) {
+    if (!Esr_pr_id || !Esr_shift_id || !Esr_from_date) {
       await transaction.rollback();
-
       return res.status(400).json({
         success: false,
         message:
@@ -346,24 +337,15 @@ exports.assignShift = async (
       });
     }
 
-    if (
-      !isValidDateString(
-        Esr_from_date
-      )
-    ) {
+    if (!isValidDateString(Esr_from_date)) {
       await transaction.rollback();
-
       return res.status(400).json({
         success: false,
-        message:
-          "Invalid Esr_from_date. Use YYYY-MM-DD.",
+        message: "Invalid Esr_from_date. Use YYYY-MM-DD.",
       });
     }
 
-    const fromDate =
-      normalizeDate(
-        Esr_from_date
-      );
+    const fromDate = normalizeDate(Esr_from_date);
 
     let toDate = null;
 
@@ -372,28 +354,18 @@ exports.assignShift = async (
       Esr_to_date !== undefined &&
       Esr_to_date !== ""
     ) {
-      if (
-        !isValidDateString(
-          Esr_to_date
-        )
-      ) {
+      if (!isValidDateString(Esr_to_date)) {
         await transaction.rollback();
-
         return res.status(400).json({
           success: false,
-          message:
-            "Invalid Esr_to_date. Use YYYY-MM-DD.",
+          message: "Invalid Esr_to_date. Use YYYY-MM-DD.",
         });
       }
 
-      toDate =
-        normalizeDate(
-          Esr_to_date
-        );
+      toDate = normalizeDate(Esr_to_date);
 
       if (toDate < fromDate) {
         await transaction.rollback();
-
         return res.status(400).json({
           success: false,
           message:
@@ -402,193 +374,142 @@ exports.assignShift = async (
       }
     }
 
-    if (
-      !["MASTER", "MANUAL"].includes(
-        Esr_assignment_type
-      )
-    ) {
+    if (!["MASTER", "MANUAL"].includes(Esr_assignment_type)) {
       await transaction.rollback();
-
       return res.status(400).json({
         success: false,
-        message:
-          "Esr_assignment_type must be MASTER or MANUAL.",
+        message: "Esr_assignment_type must be MASTER or MANUAL.",
       });
     }
 
-    const employee =
-      await Personal.findByPk(
-        Esr_pr_id,
-        {
-          transaction,
-        }
-      );
+    const employee = await Personal.findByPk(Esr_pr_id, { transaction });
 
     if (!employee) {
       await transaction.rollback();
-
       return res.status(404).json({
         success: false,
-        message:
-          "Employee not found.",
+        message: "Employee not found.",
       });
     }
 
-    const shift =
-      await ShiftMaster.findOne({
-        where: {
-          Sm_shift_id:
-            Esr_shift_id,
-          Sm_IsActive: true,
-        },
-        transaction,
-      });
+    const shift = await ShiftMaster.findOne({
+      where: {
+        Sm_shift_id: Esr_shift_id,
+        Sm_IsActive: true,
+      },
+      transaction,
+    });
 
     if (!shift) {
       await transaction.rollback();
-
       return res.status(404).json({
         success: false,
-        message:
-          "Active shift not found.",
+        message: "Active shift not found.",
       });
     }
 
-    const activeRosters =
-      await EmployeeShiftRoster.findAll(
+    const activeRosters = await EmployeeShiftRoster.findAll({
+      where: {
+        Esr_pr_id,
+        Esr_IsActive: true,
+      },
+      order: [["Esr_roster_id", "DESC"]],
+      transaction,
+    });
+
+    // Find an existing active roster that overlaps the requested range
+    const existingRoster = activeRosters.find((roster) => {
+      const existingFrom = normalizeDate(roster.Esr_from_date);
+      const existingTo = roster.Esr_to_date
+        ? normalizeDate(roster.Esr_to_date)
+        : null;
+
+      if (!existingFrom) {
+        return false;
+      }
+
+      const newStartsBeforeExistingEnds =
+        !existingTo || fromDate <= existingTo;
+
+      const newEndsAfterExistingStarts =
+        !toDate || toDate >= existingFrom;
+
+      return newStartsBeforeExistingEnds && newEndsAfterExistingStarts;
+    });
+
+    let roster;
+    let isUpdate = false;
+
+    if (existingRoster) {
+      // Record already exists for this range: update it
+      await existingRoster.update(
         {
-          where: {
-            Esr_pr_id,
-            Esr_IsActive: true,
-          },
-          order: [
-            [
-              "Esr_roster_id",
-              "DESC",
-            ],
-          ],
-          transaction,
-        }
+          Esr_shift_id,
+          Esr_from_date: fromDate,
+          Esr_to_date: toDate,
+          Esr_assignment_type,
+          Esr_UpdatedBy: userId, // remove if this column doesn't exist
+        },
+        { transaction }
       );
 
-    const hasOverlap =
-      activeRosters.some(
-        (roster) => {
-          const existingFrom =
-            normalizeDate(
-              roster.Esr_from_date
-            );
-
-          const existingTo =
-            roster.Esr_to_date
-              ? normalizeDate(
-                  roster.Esr_to_date
-                )
-              : null;
-
-          if (!existingFrom) {
-            return false;
-          }
-
-          const newStartsBeforeExistingEnds =
-            !existingTo ||
-            fromDate <= existingTo;
-
-          const newEndsAfterExistingStarts =
-            !toDate ||
-            toDate >= existingFrom;
-
-          return (
-            newStartsBeforeExistingEnds &&
-            newEndsAfterExistingStarts
-          );
-        }
-      );
-
-    if (hasOverlap) {
-      await transaction.rollback();
-
-      return res.status(409).json({
-        success: false,
-        message:
-          "Employee already has an active shift roster for the selected date range.",
-      });
-    }
-
-    const roster =
-      await EmployeeShiftRoster.create(
+      roster = existingRoster;
+      isUpdate = true;
+    } else {
+      // No overlap: create a new record
+      roster = await EmployeeShiftRoster.create(
         {
           Esr_pr_id,
           Esr_shift_id,
-          Esr_from_date:
-            fromDate,
+          Esr_from_date: fromDate,
           Esr_to_date: toDate,
           Esr_assignment_type,
-          Esr_CreatedBy:
-            userId,
+          Esr_CreatedBy: userId,
           Esr_IsActive: true,
         },
-        {
-          transaction,
-        }
+        { transaction }
       );
+    }
 
-    const createdRoster =
-      await EmployeeShiftRoster.findByPk(
-        roster.Esr_roster_id,
-        {
-          transaction,
-        }
-      );
+    const savedRoster = await EmployeeShiftRoster.findByPk(
+      roster.Esr_roster_id,
+      { transaction }
+    );
 
-    if (!createdRoster) {
+    if (!savedRoster) {
       await transaction.rollback();
-
       return res.status(500).json({
         success: false,
-        message:
-          "Failed to retrieve created shift roster.",
+        message: "Failed to retrieve shift roster.",
       });
     }
 
-    const breaks =
-      await getShiftBreaks(
-        Esr_shift_id,
-        transaction
-      );
+    const breaks = await getShiftBreaks(Esr_shift_id, transaction);
 
     await transaction.commit();
 
-    const result =
-      await getEmployeeDetails(
-        createdRoster
-      );
+    const result = await getEmployeeDetails(savedRoster);
 
-    return res.status(201).json({
+    return res.status(isUpdate ? 200 : 201).json({
       success: true,
-      message:
-        "Shift assigned successfully.",
+      message: isUpdate
+        ? "Existing shift roster updated successfully."
+        : "Shift assigned successfully.",
       data: {
         ...result,
         Breaks: breaks,
       },
     });
   } catch (error) {
-    if (
-      !transaction.finished
-    ) {
+    if (!transaction.finished) {
       await transaction.rollback();
     }
 
-    console.error(
-      "assignShift Error:",
-      error
-    );
+    console.error("assignShift Error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to assign shift.",
+      message: "Failed to assign shift.",
       error: error.message,
     });
   }

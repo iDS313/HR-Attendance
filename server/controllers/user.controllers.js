@@ -265,6 +265,14 @@ const getAllEmployees = async (req, res) => {
 /* ============================================================
    GET ALL EMPLOYEES PAGINATED
 ============================================================ */
+const parseStatus = (value) => {
+  if (value === undefined || value === "") return undefined;
+  const v = String(value).trim().toLowerCase();
+  if (["true", "1", "active"].includes(v)) return true;
+  if (["false", "0", "inactive"].includes(v)) return false;
+  return undefined;
+};
+
 const getAllEmployeesPaginated = async (req, res) => {
   try {
     const page = Math.max(parseInt(req.query.page) || 1, 1);
@@ -280,9 +288,22 @@ const getAllEmployeesPaginated = async (req, res) => {
       UsrRoleMaster,
       Login,
       UserImage,
+      EmployeeShiftRoster,
+      ShiftMaster,
     } = db;
 
     const searchValue = search.trim();
+    const statusFilter = parseStatus(status);
+
+    // =========================================================
+    // HELPERS
+    // =========================================================
+    const toDateStr = (v) => (v ? String(v).slice(0, 10) : null);
+
+    const getLocalToday = () => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    };
 
     // =========================================================
     // PERSONAL WHERE
@@ -291,52 +312,24 @@ const getAllEmployeesPaginated = async (req, res) => {
 
     if (searchValue) {
       personalWhere[Op.or] = [
-        {
-          pr_first_name: {
-            [Op.iLike]: `%${searchValue}%`,
-          },
-        },
-        {
-          pr_last_name: {
-            [Op.iLike]: `%${searchValue}%`,
-          },
-        },
-        {
-          pr_email: {
-            [Op.iLike]: `%${searchValue}%`,
-          },
-        },
+        { pr_first_name: { [Op.iLike]: `%${searchValue}%` } },
+        { pr_last_name: { [Op.iLike]: `%${searchValue}%` } },
+        { pr_email: { [Op.iLike]: `%${searchValue}%` } },
       ];
-    }
-
-    // Status filter applies only to employee list
-    if (status !== undefined && status !== "") {
-      personalWhere.pr_is_active = status === "true";
     }
 
     // =========================================================
     // SUMMARY PERSONAL WHERE
-    // Do NOT add status filter here
+    // Search only. Status filter is NOT applied here so the
+    // active/inactive summary counts show both groups.
     // =========================================================
     const summaryPersonalWhere = {};
 
     if (searchValue) {
       summaryPersonalWhere[Op.or] = [
-        {
-          pr_first_name: {
-            [Op.iLike]: `%${searchValue}%`,
-          },
-        },
-        {
-          pr_last_name: {
-            [Op.iLike]: `%${searchValue}%`,
-          },
-        },
-        {
-          pr_email: {
-            [Op.iLike]: `%${searchValue}%`,
-          },
-        },
+        { pr_first_name: { [Op.iLike]: `%${searchValue}%` } },
+        { pr_last_name: { [Op.iLike]: `%${searchValue}%` } },
+        { pr_email: { [Op.iLike]: `%${searchValue}%` } },
       ];
     }
 
@@ -353,25 +346,22 @@ const getAllEmployeesPaginated = async (req, res) => {
       orgWhere.or_designation_id = designation;
     }
 
+    // Status filter uses organization.or_is_active
+    if (statusFilter !== undefined) {
+      orgWhere.or_is_active = statusFilter;
+    }
+
     if (searchValue) {
       orgWhere[Op.or] = [
-        {
-          or_emp_id: {
-            [Op.iLike]: `%${searchValue}%`,
-          },
-        },
-        {
-          or_organization_email: {
-            [Op.iLike]: `%${searchValue}%`,
-          },
-        },
+        { or_emp_id: { [Op.iLike]: `%${searchValue}%` } },
+        { or_organization_email: { [Op.iLike]: `%${searchValue}%` } },
       ];
     }
 
     const hasOrgFilter = Object.keys(orgWhere).length > 0;
 
     // =========================================================
-    // TOTAL EMPLOYEES
+    // TOTAL EMPLOYEES (matches the list filters)
     // =========================================================
     const total = await Personal.count({
       where: personalWhere,
@@ -388,33 +378,22 @@ const getAllEmployeesPaginated = async (req, res) => {
     });
 
     // =========================================================
-    // ACTIVE EMPLOYEES
-    // IMPORTANT:
-    // Based on personal.pr_is_active
-    // NOT organizations.or_is_active
+    // ACTIVE / INACTIVE SUMMARY (organization.or_is_active)
     // =========================================================
     const allActive = await Organizations.count({
       where: {
         ...summaryPersonalWhere,
         or_is_active: true,
       },
-     
       distinct: true,
       col: "pr_id",
     });
 
-    // =========================================================
-    // INACTIVE EMPLOYEES
-    // IMPORTANT:
-    // Based on personal.pr_is_active
-    // NOT organizations.or_is_active
-    // =========================================================
     const allInactive = await Organizations.count({
       where: {
         ...summaryPersonalWhere,
         or_is_active: false,
       },
-   
       distinct: true,
       col: "pr_id",
     });
@@ -434,10 +413,7 @@ const getAllEmployeesPaginated = async (req, res) => {
           required: true,
           where: {
             ...orgWhere,
-
-            // Organization must be active for new joiners
             or_is_active: true,
-
             or_joining_date: {
               [Op.ne]: null,
               [Op.lte]: new Date(),
@@ -452,6 +428,8 @@ const getAllEmployeesPaginated = async (req, res) => {
 
     // =========================================================
     // FETCH EMPLOYEES
+    // required: hasOrgFilter excludes non-matching employees
+    // when department, designation, or status is set
     // =========================================================
     const employees = await Personal.findAll({
       where: personalWhere,
@@ -460,7 +438,7 @@ const getAllEmployeesPaginated = async (req, res) => {
         {
           model: Organizations,
           as: "organizations",
-          required: false,
+          required: hasOrgFilter,
           where: hasOrgFilter ? orgWhere : undefined,
         },
 
@@ -505,22 +483,64 @@ const getAllEmployeesPaginated = async (req, res) => {
             END
           `),
         ],
-
         [
           literal(`
             NULLIF("organizations"."or_emp_id", '')::BIGINT
             ASC NULLS LAST
           `),
         ],
-
         ["pr_id", "ASC"],
       ],
 
       limit,
       offset,
-
       subQuery: false,
     });
+
+    // =========================================================
+    // FETCH CURRENT SHIFT FOR THE EMPLOYEES ON THIS PAGE
+    // Current = active roster whose date range covers today.
+    // Rosters are ordered newest first, so the first match wins.
+    // =========================================================
+    const employeeIds = employees.map((p) => p.pr_id);
+    const today = getLocalToday();
+    const currentRosterByPr = {};
+    const shiftById = {};
+
+    if (employeeIds.length > 0) {
+      const rosters = await EmployeeShiftRoster.findAll({
+        where: {
+          Esr_pr_id: { [Op.in]: employeeIds },
+          Esr_IsActive: true,
+        },
+        order: [["Esr_roster_id", "DESC"]],
+        raw: true,
+      });
+
+      const shiftIds = [...new Set(rosters.map((r) => r.Esr_shift_id))];
+
+      if (shiftIds.length > 0) {
+        const shifts = await ShiftMaster.findAll({
+          where: { Sm_shift_id: { [Op.in]: shiftIds } },
+          raw: true,
+        });
+
+        shifts.forEach((s) => {
+          shiftById[s.Sm_shift_id] = s;
+        });
+      }
+
+      rosters.forEach((r) => {
+        const from = toDateStr(r.Esr_from_date);
+        const to = toDateStr(r.Esr_to_date);
+
+        const coversToday = from && from <= today && (!to || to >= today);
+
+        if (coversToday && !currentRosterByPr[r.Esr_pr_id]) {
+          currentRosterByPr[r.Esr_pr_id] = r;
+        }
+      });
+    }
 
     // =========================================================
     // FORMAT EMPLOYEE RESPONSE
@@ -537,103 +557,74 @@ const getAllEmployeesPaginated = async (req, res) => {
       const img =
         p.userImages && p.userImages.length > 0 ? p.userImages[0] : null;
 
+      const roster = currentRosterByPr[p.pr_id] || null;
+      const shift = roster ? shiftById[roster.Esr_shift_id] || null : null;
+
       return {
         id: p.pr_id,
 
-        // =====================================================
-        // PERSONAL
-        // =====================================================
         personal: {
           pr_id: p.pr_id,
-
           email: p.pr_email,
-
           first_name: p.pr_first_name,
-
           last_name: p.pr_last_name,
-
           full_name: `${p.pr_first_name || ""} ${p.pr_last_name || ""}`.trim(),
-
           dob: p.pr_dob ? String(p.pr_dob).slice(0, 10) : null,
-
           gender_id: p.pr_gender_id,
-
           blood_group_id: p.pr_blood_group_id,
-
           marital_status_id: p.pr_marital_status_id,
-
           nationality_id: p.pr_nationality_id,
-
           profile_image: p.pr_profile_image,
-
-          // IMPORTANT:
-          // Employee active/inactive status
           is_active: p.pr_is_active,
-
           created_at: p.pr_created_at,
-
           updated_at: p.pr_updated_at,
-
           created_by: p.pr_created_by,
-
           updated_by: p.pr_updated_by,
         },
 
-        // =====================================================
-        // ORGANIZATION
-        // =====================================================
         organization: org
           ? {
               or_id: org.or_id,
-
               pr_id: org.pr_id,
-
               organization_name: org.or_organization_name,
-
               organization_location: org.or_organization_location,
-
               employee_id: org.or_emp_id,
-
-              // Organization status
               is_active: org.or_is_active,
-
               employee_type_id: org.or_employee_type_id,
-
               reporting_location_id: org.or_reporting_location_id,
-
               organization_email: org.or_organization_email,
-
               official_email: org.or_official_email,
-
               official_contact: org.or_official_contact,
-
               reporting_to_id: org.or_reporting_to_id,
-
               department_id: org.or_department_id,
-
               designation_id: org.or_designation_id,
-
               joining_date: org.or_joining_date
                 ? String(org.or_joining_date).slice(0, 10)
                 : null,
-
               leaving_date: org.or_leaving_date
                 ? String(org.or_leaving_date).slice(0, 10)
                 : null,
-
               created_at: org.or_created_at,
-
               updated_at: org.or_updated_at,
-
               created_by: org.or_created_by,
-
               updated_by: org.or_updated_by,
             }
           : null,
 
         // =====================================================
-        // ROLES
+        // SHIFT (current active roster)
         // =====================================================
+        shift: roster
+          ? {
+              roster_id: roster.Esr_roster_id,
+              shift_id: roster.Esr_shift_id,
+              shift_name: shift ? shift.Sm_shift_name : null,
+              assignment_type: roster.Esr_assignment_type,
+              from_date: toDateStr(roster.Esr_from_date),
+              to_date: toDateStr(roster.Esr_to_date),
+            }
+          : null,
+
         roles: (p.userRoles || [])
           .map((r) =>
             r.role
@@ -645,21 +636,14 @@ const getAllEmployeesPaginated = async (req, res) => {
           )
           .filter(Boolean),
 
-        // =====================================================
-        // LOGIN
-        // =====================================================
         login: loginRow
           ? {
               login_id: loginRow.lg_id,
-
               has_password:
                 loginRow.lg_password !== null && loginRow.lg_password !== "",
             }
           : null,
 
-        // =====================================================
-        // USER IMAGE
-        // =====================================================
         user_image: img
           ? {
               image_id: img.ui_id,
@@ -698,15 +682,11 @@ const getAllEmployeesPaginated = async (req, res) => {
 
       filters: {
         search: searchValue || null,
-
         department:
           department !== undefined && department !== "" ? department : null,
-
         designation:
           designation !== undefined && designation !== "" ? designation : null,
-
-        status:
-          status === undefined || status === "" ? null : status === "true",
+        status: statusFilter === undefined ? null : statusFilter,
       },
 
       employees: rows,
